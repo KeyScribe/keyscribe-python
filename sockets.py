@@ -55,13 +55,13 @@ async def client_send():
             # Check the state of the push button
             if GPIO.input(4) == GPIO.LOW:
                 # Button is pressed, send a message to the client
-                await websocket.send("PRESSED GPIO 4")
+                await websocket.send("green")
             elif GPIO.input(27) == GPIO.LOW:
-                await websocket.send("PRESSED GPIO 27")
+                await websocket.send("red")
             elif GPIO.input(10) == GPIO.LOW:
-                await websocket.send("PRESSED GPIO 10")
+                await websocket.send("yellow")
             elif GPIO.input(9) == GPIO.LOW:
-                await websocket.send("PRESSED GPIO 9")
+                await websocket.send("blue")
             await asyncio.sleep(0.1)  # Small delay to reduce CPU usage
 
 async def receive_messages():
