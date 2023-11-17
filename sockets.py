@@ -1,3 +1,4 @@
+import json
 import RPi.GPIO as GPIO
 import asyncio
 import websockets
@@ -28,63 +29,105 @@ ssl_context.load_verify_locations("keys/cert.pem")
 ssl_context.load_default_certs(ssl.Purpose.CLIENT_AUTH)
 ssl_context.check_hostname = False  # Disable hostname verification
 
-def light_up_led(pin):
-    GPIO.output(pin, GPIO.HIGH)  # Set the specified GPIO pin high
-    time.sleep(2)  # Light up the LED for 3 seconds
-    GPIO.output(pin, GPIO.LOW)  # Set the GPIO pin low to turn off the LED
+#[ green, red, yellow, blue]
+BUTTON_PINS = [4, 27, 10, 9]
+LED_PINS = [15, 14, 17, 18]
 
+# Pairing each button with an LED
+button_led_pairs = {4: 15, 27: 14, 10: 17, 9: 18}
+# Keeping track of which LED was press and when
+start_time = {pin: None for pin in BUTTON_PINS}
+#saving the duration for each key pressed to pass to the server
+time_duration = {pin: None for pin in BUTTON_PINS}
+#keeping track of which button state was changed, 0 -> not changed, 1 -> changed (rising or falling edge detected)
+button_state = {pin: None for pin in BUTTON_PINS}
+
+#########################################################################################################
+# Interrupt handler function, marks the pin that the rising or falling edge was detected from
+def button_pressed_callback(channel):
+    global button_state
+    #to announce change of button status
+    button_state[channel] = 1
+
+#########################################################################################################
 # Initialize GPIO
-GPIO.setwarnings(False)
-GPIO.setmode(GPIO.BCM)
-
-GPIO.setup(4, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Push Button connected to GPIO 4
-GPIO.setup(10, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Push Button connected to GPIO 4
-GPIO.setup(9, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Push Button connected to GPIO 4
-GPIO.setup(27, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Push Button connected to GPIO 4
+def setup_gpio():
+    global button_state
     
-GPIO.setup(14, GPIO.OUT)  # Green LED
-GPIO.setup(15, GPIO.OUT)  # Red LED
-GPIO.setup(18, GPIO.OUT)  # Yellow LED
-GPIO.setup(17, GPIO.OUT)  # Blue LED
+    GPIO.setwarnings(False)
+    GPIO.setmode(GPIO.BCM)
 
-# Function to handle WebSocket connections
-async def client_send():
+    #LED pins  
+    for pin in LED_PINS:
+        GPIO.setup(pin, GPIO.OUT)
+
+    #initializing the state
+    for pin, state in button_state.items():
+        button_state[pin] = 0
+    
+    #Push button pins
+    for pin in BUTTON_PINS:
+        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Push Button connected to GPIO [PIN]
+        #event for each pin, both falling and rising edge interrupt
+        GPIO.add_event_detect(pin, GPIO.BOTH, callback=button_pressed_callback, bouncetime=1)
+
+#########################################################################################################
+# Handles the turning on and off of the LEDs
+def light_up_led(pin, state):
+    global time_duration, start_time
+
+    if state == 0:
+        start_time[pin] = time.time()
+        GPIO.output(button_led_pairs[pin], GPIO.HIGH)
+    elif state == 1:
+        GPIO.output(button_led_pairs[pin], GPIO.LOW)
+        time_duration[pin] = time.time() - start_time[pin]
+        print(f"Duration for {button_led_pairs[pin]} is {time_duration[pin]}")
+        start_time[pin] = 0
+
+#########################################################################################################
+# Function to handle the received WebSocket message
+async def receive_messages(websocket):
+    try:
+        while True:
+            raw_message = await websocket.recv()
+            if raw_message:
+                message = json.loads(raw_message)
+                print("Received:", message)
+
+                pin = message.get("pin")
+                state = message.get("state")
+                light_up_led(int(pin), int(state))
+
+                await asyncio.sleep(0.05)  # Add a small delay to avoid busy-wait
+    except websockets.ConnectionClosed as e:
+        # Handle a closed connection
+        print("Connection closed:", e)
+            
+#########################################################################################################
+# main loop
+async def main():
+    setup_gpio()
     async with websockets.connect(server_url, ssl=ssl_context) as websocket:
         print("Connected to Server")
+        # Create a task to receive messages
+        recv_task = asyncio.ensure_future(receive_messages(websocket))
+
         while True:
-            # Check the state of the push button
-            if GPIO.input(4) == GPIO.LOW:
-                # Button is pressed, send a message to the client
-                await websocket.send("green")
-            elif GPIO.input(27) == GPIO.LOW:
-                await websocket.send("red")
-            elif GPIO.input(10) == GPIO.LOW:
-                await websocket.send("yellow")
-            elif GPIO.input(9) == GPIO.LOW:
-                await websocket.send("blue")
-            await asyncio.sleep(0.1)  # Small delay to reduce CPU usage
+            # Check the state of the push button, if changed (=1) handle it
+            for button_pin, led_pin in button_led_pairs.items():
+                if button_state[button_pin] == 1:
+                    if GPIO.input(button_pin) == GPIO.LOW:
+                        # Button is pressed, send a message to the client
+                        message = {"pin": str(button_pin), "state": "0"}
+                        await websocket.send(json.dumps(message))
+                    elif GPIO.input(button_pin) == GPIO.HIGH:
+                        # Button is pressed, send a message to the client
+                        message = {"pin": str(button_pin), "state": "1"}
+                        await websocket.send(json.dumps(message))
+                    button_state[button_pin] = 0
+            await asyncio.sleep(0.05)  # Add a small delay to avoid busy-wait
 
-async def receive_messages():
-    async with websockets.connect(server_url, ssl=ssl_context) as websocket:
-        while True:
-            # LEDs
-            message = await websocket.recv()
-            print("Received:", message)
-            if message == "red":
-                light_up_led(14)
-            elif message == "green":
-                light_up_led(15)
-            elif message == "yellow":
-                light_up_led(17)
-            elif message == "blue":
-                light_up_led(18)
-            await asyncio.sleep(0.1)
-
-def main():
-    asyncio.get_event_loop().run_until_complete(client_send())
-    asyncio.get_event_loop().run_until_complete(receive_messages())
-
-
-        
 if __name__ == "__main__":
-    main()
+    asyncio.get_event_loop().run_until_complete(main())
+
