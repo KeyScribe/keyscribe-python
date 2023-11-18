@@ -6,6 +6,7 @@ import ssl
 import pathlib
 import time
 
+ID = "12345678"
 server_url = "wss://192.168.137.1:8000/ws"
 
 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -98,7 +99,7 @@ async def receive_messages(websocket):
                 light_up_led(int(pin), int(state))
 
                 if int(state) == 1 and not button_message_sent[int(pin)]:
-                    message = {"pin": pin, "state": "1", "start_time": start_time[int(pin)], "duration": time_duration[int(pin)]}
+                    message = {"id": ID, "pin": pin, "state": "1", "start_time": start_time[int(pin)], "duration": time_duration[int(pin)]}
                     print(message)
                     await websocket.send(json.dumps(message))
                     start_time[int(pin)] = 0
@@ -128,11 +129,11 @@ async def main():
                 if button_state[button_pin] == 1:
                     if GPIO.input(button_pin) == GPIO.LOW:
                         # Button is pressed, send a message to the client
-                        message = {"pin": str(button_pin), "state": "0", "start_time": "-1", "duration": "-1"}
+                        message = {"id": ID, "pin": str(button_pin), "state": "0", "start_time": "-1", "duration": "-1"}
                         await websocket.send(json.dumps(message))
                     elif GPIO.input(button_pin) == GPIO.HIGH:
                         # Button is released, send a message to the client
-                        message = {"pin": str(button_pin), "state": "1", "start_time": "-1", "duration": "-1"}
+                        message = {"id": ID, "pin": str(button_pin), "state": "1", "start_time": "-1", "duration": "-1"}
                         print(message)
                         await websocket.send(json.dumps(message))
                     button_state[button_pin] = 0
